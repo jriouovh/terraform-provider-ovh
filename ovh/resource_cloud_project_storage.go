@@ -8,9 +8,12 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/ovh/go-ovh/ovh"
@@ -51,6 +54,11 @@ func (d *cloudProjectStorageResource) Configure(_ context.Context, req resource.
 
 func (d *cloudProjectStorageResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = CloudProjectRegionStorageResourceSchema(ctx)
+	resp.Schema.Blocks = map[string]schema.Block{
+		"timeouts": timeouts.Block(ctx, timeouts.Opts{
+			Delete: true,
+		}),
+	}
 }
 
 func (r *cloudProjectStorageResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
@@ -308,6 +316,21 @@ func (r *cloudProjectStorageResource) Delete(ctx context.Context, req resource.D
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	var deleteTimeouts timeouts.Value
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("timeouts"), &deleteTimeouts)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	deleteTimeout, diags := deleteTimeouts.Delete(ctx, 2*time.Hour)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, deleteTimeout)
+	defer cancel()
 
 	if err := r.deleteBucket(ctx, data.ServiceName.ValueString(), data.RegionName.ValueString(), data.Name.ValueString()); err != nil {
 		resp.Diagnostics.AddError(

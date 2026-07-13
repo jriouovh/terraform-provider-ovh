@@ -20,6 +20,9 @@ func TestAccCloudProjectRegionStorage_basic(t *testing.T) {
 		versioning = {
 			status = "enabled"
 		}
+		timeouts {
+			delete = "3h"
+		}
 	}
 	`, serviceName, bucketName)
 
@@ -45,7 +48,7 @@ func TestAccCloudProjectRegionStorage_basic(t *testing.T) {
 				ImportStateVerifyIdentifierAttribute: "name",
 				ResourceName:                         "ovh_cloud_project_storage.storage",
 				ImportStateId:                        fmt.Sprintf("%s/GRA/%s", os.Getenv("OVH_CLOUD_PROJECT_SERVICE_TEST"), bucketName),
-				ImportStateVerifyIgnore:              []string{"created_at"}, // Ignore created_at since its value is invalid in response of the POST.
+				ImportStateVerifyIgnore:              []string{"created_at", "timeouts.delete"}, // Ignore created_at since its value is invalid in response of the POST, and timeouts which is a config-only block.
 			},
 		},
 	})
