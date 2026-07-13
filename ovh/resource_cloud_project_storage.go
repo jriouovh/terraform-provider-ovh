@@ -358,7 +358,9 @@ func (r *cloudProjectStorageResource) deleteBucket(ctx context.Context, serviceN
 			idsToDelete []map[string]string
 		)
 
-		if err := r.config.OVHClient.GetWithContext(ctx, endpoint, &objects); err != nil {
+		if err := retryStorageCallOnInternalError(ctx, "GET "+endpoint, func() error {
+			return r.config.OVHClient.GetWithContext(ctx, endpoint, &objects)
+		}); err != nil {
 			return fmt.Errorf("error calling GET %s: %w", endpoint, err)
 		}
 
@@ -374,10 +376,8 @@ func (r *cloudProjectStorageResource) deleteBucket(ctx context.Context, serviceN
 		}
 
 		tflog.Info(ctx, fmt.Sprintf("removing objects %s", idsToDelete))
-		if err := r.config.OVHClient.PostWithContext(ctx, bulkDeleteEndpoint, map[string]any{
-			"objects": idsToDelete,
-		}, nil); err != nil {
-			return fmt.Errorf("error calling POST %s: %w", bulkDeleteEndpoint, err)
+		if err := r.bulkDeleteObjects(ctx, bulkDeleteEndpoint, idsToDelete); err != nil {
+			return err
 		}
 	}
 
@@ -393,6 +393,59 @@ func (r *cloudProjectStorageResource) deleteBucket(ctx context.Context, serviceN
 		}
 
 		return fmt.Errorf("error calling DELETE %s: %w", endpoint, err)
+	}
+
+	return nil
+}
+
+const (
+	storageDeleteObjectsDefaultMaxRetries = 5
+	storageDeleteObjectsMaxRetriesEnvVar  = "OVH_STORAGE_BULK_DELETE_MAX_RETRIES"
+)
+
+func storageDeleteObjectsMaxRetries() int {
+	if v := os.Getenv(storageDeleteObjectsMaxRetriesEnvVar); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+
+	return storageDeleteObjectsDefaultMaxRetries
+}
+
+// retryStorageCallOnInternalError runs call, retrying while it fails with an HTTP 500.
+// Emptying large buckets can intermittently fail server-side on both the object listing
+// and the bulk delete, and both calls are safe to replay. The retry count is configurable
+// through the OVH_STORAGE_BULK_DELETE_MAX_RETRIES environment variable.
+func retryStorageCallOnInternalError(ctx context.Context, description string, call func() error) error {
+	maxRetries := storageDeleteObjectsMaxRetries()
+
+	var err error
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		err = call()
+		if err == nil {
+			return nil
+		}
+
+		ovhErr, ok := err.(*ovh.APIError)
+		if !ok || ovhErr.Code != http.StatusInternalServerError {
+			break
+		}
+
+		tflog.Warn(ctx, fmt.Sprintf("%s failed with internal server error (attempt %d/%d), retrying: %s",
+			description, attempt, maxRetries, err))
+	}
+
+	return err
+}
+
+func (r *cloudProjectStorageResource) bulkDeleteObjects(ctx context.Context, endpoint string, idsToDelete []map[string]string) error {
+	body := map[string]any{"objects": idsToDelete}
+
+	if err := retryStorageCallOnInternalError(ctx, "POST "+endpoint, func() error {
+		return r.config.OVHClient.PostWithContext(ctx, endpoint, body, nil)
+	}); err != nil {
+		return fmt.Errorf("error calling POST %s: %w", endpoint, err)
 	}
 
 	return nil

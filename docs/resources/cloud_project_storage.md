@@ -9,6 +9,8 @@ Create S3™* compatible storage container (* S3 is a trademark filed by Amazon 
 
 ~> When destroying a storage container, the provider will try to remove all objects it contains beforehand. This process can fail if the bucket contains locked objects. In this case, you will have to remove these objects manually before being able to run `terraform destroy` again.
 
+~> Emptying large buckets can occasionally trigger an internal server error on the object listing or bulk delete API calls. The provider automatically retries these calls up to 5 times. Set the `OVH_STORAGE_BULK_DELETE_MAX_RETRIES` environment variable to override this limit.
+
 ~> **Object Lock Removal:** Object Lock cannot be disabled once enabled on a bucket. If you remove the `object_lock` configuration block, Terraform will **destroy and recreate** the bucket, deleting all objects permanently. This is by design - there is no way to disable Object Lock on an existing bucket.
 
 ~> **Object Lock Status Change:** Changing `object_lock.status` between `disabled` and `enabled` forces bucket replacement. Object Lock must be enabled at bucket creation.
